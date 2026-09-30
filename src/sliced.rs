@@ -369,7 +369,7 @@ mod sixel_slice {
             if !sliced_bands.is_empty() {
                 data.push('-');
             }
-            data.push('\x1b');
+            data.push_str(escape);
             data.push('\\');
             data.push_str(end);
 
@@ -381,7 +381,13 @@ mod sixel_slice {
         pub fn from_sixel(sixel: Sixel, font_height: u16, is_tmux: bool) -> SlicedSixel {
             SlicedSixel::new(sixel, |s| {
                 let size = s.size;
-                let dcs_start = s.data.find("\u{1b}P").unwrap_or(0);
+                // Under tmux the sixel DCS follows the `Ptmux;` wrapper and has a doubled ESC.
+                let dcs_start = if is_tmux {
+                    s.data.find("\u{1b}\u{1b}P")
+                } else {
+                    s.data.find("\u{1b}P")
+                }
+                .unwrap_or(0);
                 let data = &s.data[dcs_start..];
                 let header_end = find_sixel_data_start(data);
                 let (header, body) = data.split_at(header_end);
@@ -579,6 +585,31 @@ mod sixel_slice {
                     panic!("should have found the first different char");
                 }
             }
+        }
+
+        #[test]
+        fn test_tmux_escapes_doubled() {
+            let image = image::ImageReader::open("./assets/Ada.png")
+                .unwrap()
+                .decode()
+                .unwrap();
+            let size = Size::new(10, 10);
+            let font_size = FontSize::new(8, 16);
+            let image = Resize::Fit(None).resize(&image, font_size, size, None);
+            let sixel = Sixel::new(image, size, true).unwrap();
+            let sliced = SlicedSixel::from_sixel(sixel, font_size.height, true);
+            let seq = sliced
+                .borrow_dependent()
+                .to_sequence(0, 0, size.width, size.height);
+
+            let inner = seq
+                .strip_prefix("\x1bPtmux;")
+                .and_then(|s| s.strip_suffix("\x1b\\"))
+                .expect("wrapped in a single tmux passthrough");
+            assert!(!inner.contains("Ptmux;"));
+            // Every ESC inside the passthrough must be doubled, including the sixel terminator.
+            assert!(inner.ends_with("\x1b\x1b\\"));
+            assert_eq!(inner.replace("\x1b\x1b", "").matches('\x1b').count(), 0);
         }
 
         #[test]

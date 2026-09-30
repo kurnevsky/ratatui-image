@@ -52,12 +52,12 @@ fn encode(img: &DynamicImage, size: Size, is_tmux: bool) -> Result<String> {
         if !sixel_data.starts_with('\x1b') {
             return Err(Errors::Tmux("sixel string did not start with escape"));
         }
+        let sixel_data = sixel_data.replace('\x1b', escape);
         // The clear sequence must be inside the tmux passthrough since it uses
         // doubled escapes.
         data.push_str(start);
         clear_area(&mut data, escape, width, height);
-        data.push_str(escape);
-        data.push_str(&sixel_data[1..]);
+        data.push_str(&sixel_data);
         data.push_str(end);
     } else {
         clear_area(&mut data, escape, width, height);
