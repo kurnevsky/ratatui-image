@@ -379,17 +379,20 @@ mod sixel_slice {
 
     impl SlicedSixel {
         pub fn from_sixel(sixel: Sixel, font_height: u16, is_tmux: bool) -> SlicedSixel {
+            // TODO: return a Result, and revisit visibility.
             SlicedSixel::new(sixel, |s| {
                 let size = s.size;
                 // Under tmux the sixel DCS follows the `Ptmux;` wrapper and has a doubled ESC.
-                let dcs_start = if is_tmux {
-                    s.data.find("\u{1b}\u{1b}P")
+                let (dcs_start, dcs_introducer_size) = if is_tmux {
+                    (s.data.find("\u{1b}\u{1b}P"), 3)
                 } else {
-                    s.data.find("\u{1b}P")
-                }
-                .unwrap_or(0);
+                    (s.data.find("\u{1b}P"), 2)
+                };
+                debug_assert!(dcs_start.is_some());
+                let dcs_start = dcs_start.unwrap_or(0);
+
                 let data = &s.data[dcs_start..];
-                let header_end = find_sixel_data_start(data);
+                let header_end = find_sixel_header_end(data, dcs_introducer_size);
                 let (header, body) = data.split_at(header_end);
                 let (dcs_prefix, decgra_prefix, color_defs) = parse_decgra(header);
                 let mut bands: Vec<&str> = body.split('-').collect();
@@ -449,17 +452,10 @@ mod sixel_slice {
         )
     }
 
-    fn find_sixel_data_start(data: &str) -> usize {
+    fn find_sixel_header_end(data: &str, dcs_introducer_index: usize) -> usize {
         let bytes = data.as_bytes();
-        let mut i = 0;
-
-        // Step 1: find ESC P
-        while i + 1 < bytes.len() {
-            if bytes[i] == 0x1B && bytes[i + 1] == b'P' {
-                break;
-            }
-            i += 1;
-        }
+        // Step 1: find the <esc>P has already been solved by caller, also accounted for tmux.
+        let mut i = dcs_introducer_index;
 
         // Step 2: skip past `q`
         while i < bytes.len() && bytes[i] != b'q' {
